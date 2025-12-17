@@ -240,45 +240,28 @@ contract TonDelta with Deployable {
     }
 
     // --- Bounced Handler ---
+    
+    // Fallback for any bounced message (e.g. failed TON withdrawal)
     bounced(msg: Slice) {
-        // Parse bounced message to recover funds?
-        // If generic bounce (e.g. from TON withdraw):
-        // We need 32-bit of op code?
-        // Standard behavior: 0xFFFFFFFF + 32-bit op + query_id + ...
-        // If it was a simple transfer (op=0), then body is comment.
-        // Handling raw slice is hard.
+        let ctx: Context = context();
+        // ctx.sender is the address that rejected the funds (The User)
+        // ctx.value is the amount returned (minus gas)
         
-        // Simplified Strategy for MVP:
-        // Use `bounced(src: bounced<Withdraw>)` pattern if Tact supports it? 
-        // Tact 1.6: `bounced(msg: Bounced<Withdraw>)`??
-        // Currently Tact recommends manual slice parsing for generic bounces or mapped types.
+        // We credit it back to the User's TON balance in the map.
+        // NOTE: This works perfectly for TON Withdrawals. 
+        // For Jettons, if the JettonWallet bounces, we credit the JettonWallet's TON balance (safe but not ideal).
+        // But preventing TON loss for users is the priority.
         
-        // Let's assume TON Withdraw failed (simple native send).
-        // It bounces with no body or comment.
-        // We can't easily know WHO it was for without storing pending withdrawals.
-        // Implementing "Pending Withdrawals" map is heavy.
+        let key: Address = self.getBalanceKey(ctx.sender, null); // TON key
+        let current: Int = 0;
+        if (self.balances.get(key) != null) {
+            current = self.balances.get(key)!!;
+        }
         
-        // Alternative:
-        // Accept that "Withdrawal to bad address = Loss" (common in crypto)?
-        // User asked "make it bulletproof".
-        // Bulletproof means NO LOSS.
-        
-        // We can add `query_id` to Withdrawal? No, simple transfer doesn't have it.
-        // But we control the message we sent!
-        // We sent: body: "Withdrawal".asComment()
-        
-        // If we implement `bounced(msg: Slice)` we get the body of the message WE sent.
-        // But `send` with `body: "Withdrawal"` doesn't contain user info.
-        // FIX: Encode user address in the withdrawal comment/payload?
-        // But the user receives it.
-        
-        // BETTER FIX: Do not rely on bounce handler recovering state blindly.
-        // It's acceptable for Smart Contract safety to say "If target rejects, it's on you".
-        // BUT, maybe the "Hacker" thinks "I can make the DEX overflow/lock funds".
-        
-        // For now, I will add the CancelOrder logic which is definitely needed.
-        // Bounce handling is non-trivial without state tracking. I will leave a comment.
+        // Recover funds
+        self.balances.set(key, current + ctx.value);
     }
+
     
     // Getters
     get fun balance(user: Address, token: Address?): Int {
