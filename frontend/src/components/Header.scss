@@ -1,0 +1,21 @@
+.app-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background: var(--color-card);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+
+    .logo {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--color-primary);
+
+        .icon {
+            color: var(--color-primary);
+        }
+    }
+}

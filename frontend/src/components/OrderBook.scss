@@ -1,0 +1,38 @@
+.order-book {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    font-size: 0.9rem;
+
+    .table-header {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        padding: 0.5rem;
+        color: rgba(255,255,255,0.5);
+        font-size: 0.8rem;
+    }
+
+    .table-body {
+        flex: 1;
+        overflow-y: auto;
+        
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            padding: 0.3rem 0.5rem;
+            cursor: pointer;
+            
+            &:hover {
+                background: rgba(255,255,255,0.05);
+            }
+
+            &.sell {
+                color: var(--color-danger);
+            }
+            
+            &.buy {
+                color: var(--color-success);
+            }
+        }
+    }
+}

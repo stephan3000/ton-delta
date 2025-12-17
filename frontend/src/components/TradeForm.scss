@@ -1,0 +1,63 @@
+.trade-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    height: 100%;
+
+    .tabs {
+        display: flex;
+        gap: 0.5rem;
+        
+        button {
+            flex: 1;
+            background: rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.7);
+            
+            &.active {
+                &.buy { background: var(--color-success); color: white; }
+                &.sell { background: var(--color-danger); color: white; }
+            }
+        }
+    }
+
+    .inputs {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        flex: 1;
+    }
+
+    .input-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        
+        label {
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.5);
+        }
+
+        input {
+            background: rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 0.8rem;
+            border-radius: 8px;
+            color: white;
+            font-size: 1rem;
+            
+            &:focus {
+                outline: none;
+                border-color: var(--color-primary);
+            }
+        }
+    }
+
+    .submit-btn {
+        margin-top: auto;
+        padding: 1rem;
+        font-size: 1.1rem;
+        
+        &.buy { background: var(--color-success); }
+        &.sell { background: var(--color-danger); }
+    }
+}
