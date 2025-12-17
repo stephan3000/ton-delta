@@ -21,7 +21,10 @@ describe('TonDelta', () => {
         const deployResult = await tonDelta.send(
             deployer.getSender(),
             { value: toNano('0.05') },
-            null
+            {
+                $$type: 'Deploy',
+                queryId: 0n,
+            }
         );
 
         // @ts-ignore
@@ -47,13 +50,7 @@ describe('TonDelta', () => {
             success: true,
         });
 
-        // Verify balance 
-        // Need getter. 
-        // We need to wait for contract to process (Sandbox does this).
         const balance = await tonDelta.getBalance(userA.address, null);
-        expect(balance).toBeGreaterThanOrEqual(toNano('0.9')); // minimal gas deducted? 
-        // Actually our code: balances.set(key, current + ctx.value);
-        // It stores FULL value.
         expect(balance).toEqual(toNano('1.0'));
     });
 
@@ -62,20 +59,9 @@ describe('TonDelta', () => {
         // Sender is "FakeJettonWallet".
         const fakeJettonWallet = await blockchain.treasury('fakeJettonWallet');
 
-        // The notification message
-        // message JettonTransferNotification { query_id: Int as uint64; amount: Int as coins; sender: Address; forward_payload: Slice as remaining; }
-
-        // Use Wrapper generated types if available, else manual body.
-        // We will assume 'StoreJettonTransferNotification' isn't auto-exported nicely for `send`? 
-        // Actually, Tact wrappers export the Message types.
-
         const result = await tonDelta.send(
             fakeJettonWallet.getSender(),
             { value: toNano('0.1') },
-            // Body: JettonTransferNotification
-            // We need to construct it. 
-            // In the wrapper, typically: 
-            // export type JettonTransferNotification = { $$type: 'JettonTransferNotification'; query_id: bigint; amount: bigint; sender: Address; forward_payload: Slice; }
             {
                 $$type: 'JettonTransferNotification',
                 query_id: 0n,
@@ -96,100 +82,104 @@ describe('TonDelta', () => {
         expect(balance).toEqual(toNano('50'));
     });
 
-    it('should place order and trade', async () => {
-        // 1. User A Deposits 100 TokenA (Selling TokenA)
-        const tokenA = await blockchain.treasury('tokenA');
-        await tonDelta.send(tokenA.getSender(), { value: toNano('0.1') }, {
-            $$type: 'JettonTransferNotification',
-            query_id: 0n,
-            amount: toNano('100'),
-            sender: userA.address,
-            forward_payload: beginCell().endCell().asSlice()
-        });
+    it('should place order and trade with Fees', async () => {
+        // Setup:
+        // Maker (userA) will sell 20 TON (TokenGive) for 10 TokenA (TokenGet)
+        // Taker (userB) will buy 10 TON (TokenGive) with 5 TokenA (TokenGet)
+        // Fee is 0.3% on the Output to Taker (TON)
 
-        // 2. User B Deposits 10 TON (Buying with TON)
-        await tonDelta.send(userB.getSender(), { value: toNano('10') }, null);
+        const maker = userA;
+        const taker = userB;
+        const tokenA = deployer; // Mock Jetton, using deployer address as token address
 
-        // 3. User A places Order: Sell 50 TokenA for 5 TON.
-        // TokenGet = TON (null), AmountGet = 5 TON
-        // TokenGive = TokenA, AmountGive = 50 TokenA
-        const amountGet = toNano('5');
-        const amountGive = toNano('50');
-        const nonce = 123n;
-        const expires = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour
+        // 1. Maker deposits 20 TON
+        await tonDelta.send(maker.getSender(), { value: toNano('21') }, null); // +1 for gas/deposit
 
-        const resultOrder = await tonDelta.send(userA.getSender(), { value: toNano('0.1') }, {
-            $$type: 'Order', // Was renamed? contract uses 'message Order'
-            tokenGet: null,
+        // Check Maker Balance 
+        const makerInit = await tonDelta.getBalance(maker.address, null);
+        expect(makerInit).toEqual(toNano('21'));
+
+        // 2. Maker places Order
+        const amountGet = toNano('10'); // TokenA
+        const amountGive = toNano('20'); // TON
+        const futureExpiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+        const orderResult = await tonDelta.send(maker.getSender(), { value: toNano('0.1') }, {
+            $$type: 'Order',
+            tokenGet: tokenA.address,
             amountGet: amountGet,
-            tokenGive: tokenA.address,
+            tokenGive: null, // TON
             amountGive: amountGive,
-            expires: expires,
-            nonce: nonce,
-            maker: userA.address // Self
+            expires: futureExpiry,
+            nonce: 0n,
+            maker: maker.address
         });
 
-        // @ts-ignore
-        expect(resultOrder.transactions).toHaveTransaction({
-            from: userA.address,
+        expect(orderResult.transactions).toHaveTransaction({
+            from: maker.address,
             to: tonDelta.address,
             success: true
         });
 
-        // 4. User B Trades (Fills 2.5 TON worth -> 25 TokenA)
-        const fillAmount = toNano('2.5'); // In terms of TokenGet (TON)
-        const tradeResult = await tonDelta.send(userB.getSender(), { value: toNano('0.1') }, {
-            $$type: 'Trade',
-            tokenGet: null,
-            amountGet: amountGet,
-            tokenGive: tokenA.address,
-            amountGive: amountGive,
-            expires: expires,
-            nonce: nonce,
-            maker: userA.address,
-            amount: fillAmount,
-            signature: beginCell().endCell().asSlice() // Empty for now as we don't check
+        // 3. Taker deposits 50 TokenA
+        await tonDelta.send(tokenA.getSender(), { value: toNano('0.1') }, {
+            $$type: 'JettonTransferNotification',
+            query_id: 0n,
+            amount: toNano('50'),
+            sender: taker.address,
+            forward_payload: beginCell().endCell().asSlice()
         });
 
-        // @ts-ignore
+        // 4. Taker Trades (Fill 5 TokenA worth) -> Should get 10 TON - 0.3% Fee
+        // Trade Amount (Get) = 5.
+        // Trade Amount (Give) = (20 * 5) / 10 = 10 TON.
+        // Fee = 10 * 0.003 = 0.03 TON.
+        // Taker gets 9.97 TON.
+
+        const tradeFillAmount = toNano('5');
+
+        const tradeResult = await tonDelta.send(taker.getSender(), { value: toNano('0.1') }, {
+            $$type: 'Trade',
+            tokenGet: tokenA.address,
+            amountGet: amountGet,
+            tokenGive: null,
+            amountGive: amountGive,
+            expires: futureExpiry,
+            nonce: 0n,
+            maker: maker.address,
+            amount: tradeFillAmount,
+            signature: beginCell().endCell().asSlice()
+        });
+
         expect(tradeResult.transactions).toHaveTransaction({
-            from: userB.address,
+            from: taker.address,
             to: tonDelta.address,
             success: true
         });
 
         // Verify Balances
-        // User A should have: +2.5 TON, -25 TokenA.
-        // Initial: 0 TON (deposited 0?), 100 TokenA.
-        // wait, User A deposited 0 TON (only gas). 
-        // But logic: balances[TON] += msg.value.
-        // During deployment/Setup User A didn't deposit TON.
-        // So User A has 0 TON in contract.
-        // Trade adds 2.5 TON.
 
-        const balA_TON = await tonDelta.getBalance(userA.address, null);
-        // User A sent some TON for gas with PlaceOrder, but that's credited!
-        // `receive() { balances += msg.value }`.
-        // `receive(msg: Order)` does NOT credit value? 
-        // Wait, default receive credits value. 
-        // Specific handlers `receive(msg: Order)` do NOT automatically credit value unless we do it manually or it falls through?
-        // In Tact, specific handler executed. Value is NOT credited to custom balance map unless code does it.
-        // So User A TON balance = 2.5 (from trade).
-        expect(balA_TON).toEqual(fillAmount);
+        // Maker:
+        // TON: 21 (Initial) - 10 (Trade) = 11
+        // TokenA: 0 (Initial) + 5 (Trade) = 5
+        const makerBalTON = await tonDelta.getBalance(maker.address, null);
+        expect(makerBalTON).toEqual(toNano('11'));
 
-        // User A TokenA balance = 100 - 25 = 75.
-        const balA_Tok = await tonDelta.getBalance(userA.address, tokenA.address);
-        expect(balA_Tok).toEqual(toNano('75'));
+        const makerBalTok = await tonDelta.getBalance(maker.address, tokenA.address);
+        expect(makerBalTok).toEqual(toNano('5'));
 
-        // User B:
-        // Initial: 10 TON.
-        // Trade: -2.5 TON. (plus gas usage? No, internal balance map).
-        // Balance = 7.5 TON.
-        const balB_TON = await tonDelta.getBalance(userB.address, null);
-        expect(balB_TON).toEqual(toNano('7.5'));
+        // Taker:
+        // TON: 0 + 9.97 = 9.97
+        // TokenA: 50 - 5 = 45
+        const takerBalTok = await tonDelta.getBalance(taker.address, tokenA.address);
+        expect(takerBalTok).toEqual(toNano('45'));
 
-        // User B TokenA: +25.
-        const balB_Tok = await tonDelta.getBalance(userB.address, tokenA.address);
-        expect(balB_Tok).toEqual(toNano('25'));
+        const takerBalTON = await tonDelta.getBalance(taker.address, null);
+        expect(takerBalTON).toEqual(toNano('9.97')); // 10 - 0.03
+
+        // Owner (Deployer):
+        // TON: 0 + 0.03 = 0.03
+        const ownerBalTON = await tonDelta.getBalance(deployer.address, null);
+        expect(ownerBalTON).toEqual(toNano('0.03'));
     });
 });

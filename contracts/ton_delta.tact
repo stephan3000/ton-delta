@@ -166,6 +166,10 @@ contract TonDelta with Deployable {
     
     receive(msg: Trade) {
         let ctx: Context = context(); // Taker
+        
+        // 1. Expiry Check
+        require(now() <= msg.expires, "Order expired");
+
         // Hash order -> Address
         let orderKey: Address = self.getOrderHash(msg.tokenGet, msg.amountGet, msg.tokenGive, msg.amountGive, msg.expires, msg.nonce, msg.maker);
         
@@ -182,31 +186,45 @@ contract TonDelta with Deployable {
         require(filled + msg.amount <= msg.amountGet, "Order already filled");
         
         // Move funds
-        // 1. Deduct Taker tokenGet
+        
+        // A. Handle TokenGet (What Taker gives, Maker receives)
+        // Taker gives full amount, Maker receives full amount (Fee is on Output usually)
         let takerKeyGet: Address = self.getBalanceKey(ctx.sender, msg.tokenGet);
         let takerBalGet: Int = 0;
         if (self.balances.get(takerKeyGet) != null) { takerBalGet = self.balances.get(takerKeyGet)!!; }
         require(takerBalGet >= msg.amount, "Taker balance too low");
         self.balances.set(takerKeyGet, takerBalGet - msg.amount);
         
-        // 2. Add Maker tokenGet
         let makerKeyGet: Address = self.getBalanceKey(msg.maker, msg.tokenGet);
         let makerBalGet: Int = 0;
         if (self.balances.get(makerKeyGet) != null) { makerBalGet = self.balances.get(makerKeyGet)!!; }
         self.balances.set(makerKeyGet, makerBalGet + msg.amount);
         
-        // 3. Deduct Maker tokenGive
+        // B. Handle TokenGive (What Maker gives, Taker+Owner receive)
+        // Fee = 0.3% of amountGiveTrade
+        let fee: Int = (amountGiveTrade * 3) / 1000;
+        let takerReceive: Int = amountGiveTrade - fee;
+
+        // Deduct from Maker (They give the full amount)
         let makerKeyGive: Address = self.getBalanceKey(msg.maker, msg.tokenGive);
         let makerBalGive: Int = 0;
         if (self.balances.get(makerKeyGive) != null) { makerBalGive = self.balances.get(makerKeyGive)!!; }
         require(makerBalGive >= amountGiveTrade, "Maker balance too low");
         self.balances.set(makerKeyGive, makerBalGive - amountGiveTrade);
         
-        // 4. Add Taker tokenGive
+        // Credit Taker (They get amount - fee)
         let takerKeyGive: Address = self.getBalanceKey(ctx.sender, msg.tokenGive);
         let takerBalGive: Int = 0;
         if (self.balances.get(takerKeyGive) != null) { takerBalGive = self.balances.get(takerKeyGive)!!; }
-        self.balances.set(takerKeyGive, takerBalGive + amountGiveTrade);
+        self.balances.set(takerKeyGive, takerBalGive + takerReceive);
+
+        // Credit Owner (Fee)
+        if (fee > 0) {
+            let ownerKeyGive: Address = self.getBalanceKey(self.owner, msg.tokenGive);
+            let ownerBalGive: Int = 0;
+            if (self.balances.get(ownerKeyGive) != null) { ownerBalGive = self.balances.get(ownerKeyGive)!!; }
+            self.balances.set(ownerKeyGive, ownerBalGive + fee);
+        }
         
         // Update Order Logic
         self.orderFills.set(orderKey, filled + msg.amount);
